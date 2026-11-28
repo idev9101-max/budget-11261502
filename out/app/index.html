@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-density="regular">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Hearthline · Household money desk</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="main.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">H</span><span class="brand-copy"><strong>Hearthline</strong><small>Household money desk</small></span></div>
+    <div class="top-actions">
+      <span class="sample-badge" title="Synthetic sample data stored locally in this browser">Sample data · local only</span>
+      <div class="month-picker"><button class="icon-btn" data-action="month" data-delta="-1" aria-label="Previous month">‹</button><select id="month-select" aria-label="Active month"></select><button class="icon-btn" data-action="month" data-delta="1" aria-label="Next month">›</button></div>
+      <button class="icon-btn" data-action="theme" aria-label="Toggle dark or light theme" title="Toggle theme">◐</button>
+      <button class="icon-btn" data-action="density" aria-label="Toggle display density" title="Toggle density">☰</button>
+    </div>
+  </header>
+  <aside class="sidebar">
+    <nav aria-label="Sections">
+      <a href="#/"><span class="nav-num">01</span>Overview</a>
+      <a href="#/transactions"><span class="nav-num">02</span>Transactions</a>
+      <a href="#/budget"><span class="nav-num">03</span>Budget planner</a>
+      <a href="#/bills"><span class="nav-num">04</span>Bills &amp; calendar</a>
+      <a href="#/goals"><span class="nav-num">05</span>Savings goals</a>
+      <a href="#/debt"><span class="nav-num">06</span>Debt payoff</a>
+      <a href="#/reports"><span class="nav-num">07</span>Reports</a>
+      <a href="#/insights"><span class="nav-num">08</span>Insights</a>
+      <a href="#/settings"><span class="nav-num">09</span>Settings &amp; data</a>
+    </nav>
+    <div class="side-foot"><span class="side-line"></span><p>Offline by design.<br>Your numbers stay on this device.</p><a href="#/settings">Manage data →</a></div>
+  </aside>
+  <main id="app" tabindex="-1"></main>
+  <footer><span>Hearthline · a calm place for household money</span><span>Replace the sample data in Settings &amp; data</span></footer>
+</div>
+<div id="modal-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
