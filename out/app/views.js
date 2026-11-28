@@ -1,11 +1,12 @@
 import {
-  addDays, addMonths, billInstances, cashProjection, compactMoney, currentCash, dateFromKey,
+  addDays, addMonths, billInstances, budgetHealth, cashProjection, compactMoney, currentCash, dateFromKey,
   debtPlan, envelopeStatus, fmt, fmtDate, goalDate, incomeEvents, monthLabel, monthOf,
   monthOptions, monthStats, safeToSpend, simulate, sum, todayKey, transactionsInMonth,
-  transactionCSV, buildInsights,
+  buildInsights,
 } from './core.js';
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const money = (s, n, d = 0) => esc(fmt(s, n, d));
 const short = (s, n) => esc(compactMoney(s, n));
 const opt = (value, label, selected) => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}>${esc(label)}</option>`;
@@ -16,24 +17,29 @@ function progress(pct, color) {
   return `<div class="bar"><i style="width:${value.toFixed(1)}%;background:${esc(color)}"></i></div>`;
 }
 
-function cashflowChart(state, months) {
-  const data = months.map((m) => ({ label: fmtDate(state, `${m}-01`, { month: 'short' }), ...monthStats(state, m) }));
-  const w = 560, h = 188, l = 45, r = 8, t = 12, b = 28;
-  const max = Math.max(1, ...data.flatMap((d) => [d.income, d.spend])) * 1.12;
+function cashflowChart(state, months, opts = {}) {
+  const data = months.map((m) => ({ label: fmtDate(state, `${m}-01`, { month: 'short' }), m, ...monthStats(state, m) }));
+  const w = opts.w || 620, h = opts.h || 196, l = 42, r = 10, t = 14, b = 28;
+  const max = Math.max(1, ...data.flatMap((d) => [d.income, d.spend])) * 1.15;
   const group = (w - l - r) / Math.max(1, data.length);
-  const bw = Math.min(17, group * 0.3);
+  const bw = Math.min(18, group * 0.28);
   const y = (v) => t + (h - t - b) * (1 - v / max);
+  const xMid = (i) => l + group * i + group / 2;
   const grid = [0, 1, 2, 3].map((i) => {
     const yy = t + ((h - t - b) * i) / 3;
-    return `<line x1="${l}" y1="${yy}" x2="${w - r}" y2="${yy}" class="grid"/><text x="${l - 6}" y="${yy + 4}" text-anchor="end" class="axis">${short(state, max * (1 - i / 3))}</text>`;
+    const val = max * (1 - i / 3);
+    return `<line x1="${l}" y1="${yy}" x2="${w - r}" y2="${yy}" class="grid"/><text x="${l - 8}" y="${yy + 4}" text-anchor="end" class="axis">${short(state, val)}</text>`;
   }).join('');
+  const netPath = data.map((d, i) => `${i ? 'L' : 'M'}${xMid(i).toFixed(1)},${y(d.net).toFixed(1)}`).join(' ');
   const bars = data.map((d, i) => {
-    const cx = l + group * i + group / 2;
-    const ih = Math.max(1, h - b - y(d.income));
-    const sh = Math.max(1, h - b - y(d.spend));
-    return `<rect x="${cx - bw - 1}" y="${y(d.income)}" width="${bw}" height="${ih}" rx="3" class="income-bar"/><rect x="${cx + 1}" y="${y(d.spend)}" width="${bw}" height="${sh}" rx="3" class="spend-bar"/><text x="${cx}" y="${h - 8}" text-anchor="middle" class="axis">${esc(d.label)}</text>`;
+    const cx = xMid(i);
+    const ih = Math.max(2, h - b - y(d.income));
+    const sh = Math.max(2, h - b - y(d.spend));
+    const current = d.m === monthOf(todayKey(state));
+    return `<g class="${current ? 'current-month' : ''}"><rect x="${cx - bw - 2}" y="${y(d.income)}" width="${bw}" height="${ih}" rx="4" class="income-bar"/><rect x="${cx + 2}" y="${y(d.spend)}" width="${bw}" height="${sh}" rx="4" class="spend-bar"/><text x="${cx}" y="${h - 8}" text-anchor="middle" class="axis">${esc(d.label)}</text></g>`;
   }).join('');
-  return `<svg viewBox="0 0 ${w} ${h}" class="chart" role="img" aria-label="Monthly income and spending bars">${grid}${bars}</svg>`;
+  const netDots = data.map((d, i) => `<circle cx="${xMid(i).toFixed(1)}" cy="${y(d.net).toFixed(1)}" r="3" class="net-dot"/>`).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" class="chart cashflow-chart" role="img" aria-label="Monthly income, spending, and net cashflow">${grid}${bars}<path d="${netPath}" fill="none" class="net-line" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>${netDots}</svg>`;
 }
 
 function donutChart(state, items) {
@@ -83,44 +89,66 @@ function debtChart(state, selected, alternative) {
 }
 
 export function pageHead(state, eyebrow, title, subtitle, actions = '') {
-  return `<div class="page-head"><div><p class="eyebrow">${esc(eyebrow)}</p><h1>${esc(title)}</h1><p class="subtitle">${esc(subtitle)}</p></div><div class="head-actions">${actions}</div></div>`;
+  return `<div class="page-head"><div class="page-head-copy"><p class="eyebrow">${esc(eyebrow)}</p><h1>${esc(title)}</h1><p class="subtitle">${esc(subtitle)}</p></div><div class="head-actions">${actions}</div></div>`;
+}
+
+function scoreRing(score, label) {
+  const r = 42, c = 2 * Math.PI * r;
+  const dash = (Math.max(0, Math.min(100, score)) / 100) * c;
+  return `<div class="score-ring"><svg viewBox="0 0 120 120" role="img" aria-label="Budget health score ${score} out of 100"><circle cx="60" cy="60" r="${r}" class="ring-bg"/><circle cx="60" cy="60" r="${r}" class="ring-fg" stroke-dasharray="${dash.toFixed(1)} ${(c - dash).toFixed(1)}" transform="rotate(-90 60 60)"/><text x="60" y="56" text-anchor="middle" class="ring-score">${score}</text><text x="60" y="72" text-anchor="middle" class="ring-label">${esc(label)}</text></svg></div>`;
 }
 
 export function overview(state) {
   const month = monthOf(todayKey(state));
   const stats = monthStats(state, month);
-  const envelopes = envelopeStatus(state, month).filter((e) => e.budget > 0).slice(0, 6);
+  const envelopes = envelopeStatus(state, month).filter((e) => e.budget > 0).sort((a,b)=>b.pct-a.pct).slice(0, 5);
   const bills = billInstances(state, todayKey(state), 14);
-  const goals = state.goals.slice(0, 3);
-  const recent = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 6);
+  const recent = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 5);
   const months = monthOptions(state).filter((m) => m <= month).slice(-6);
   const plan = debtPlan(state);
   const cash = cashProjection(state, 35);
   const safe = safeToSpend(state);
-  const sim = simulate(state);
-  return `${pageHead(state, `Sample household · as of ${fmtDate(state, todayKey(state), { month: 'short', day: 'numeric', year: 'numeric' })}`, 'Household money desk', `${state.household}. ${monthLabel(state, month)} is ${stats.spend > stats.income ? 'spending ahead of income' : 'tracking inside income'}. Safe spend below covers 14 days of scheduled bills.`,
-    `<a class="btn primary" href="#/transactions">Add transaction</a><a class="btn" href="#/reports">Full report</a>`)}
-  <div class="kpi-grid">
-    <article class="kpi hero"><span class="kpi-label">Safe to spend · next 14 days</span><strong>${money(state, safe)}</strong><span class="kpi-note">${money(state, currentCash(state))} checking − ${money(state, sum(bills, (b) => b.amount))} bills − ${money(state, state.settings.safe_to_spend_buffer)} buffer</span></article>
-    <article class="kpi"><span class="kpi-label">${esc(fmtDate(state, `${month}-01`, { month: 'long' }))} cashflow</span><strong class="split">${money(state, stats.income)} <em>/</em> ${money(state, stats.spend)}</strong><span class="kpi-note">income / spent · net ${money(state, stats.net)}</span></article>
-    <article class="kpi"><span class="kpi-label">Envelope left</span><strong>${money(state, stats.left)}</strong><span class="kpi-note">${money(state, stats.budget)} planned across ${state.envelopes.length} envelopes</span></article>
-    <article class="kpi"><span class="kpi-label">Debt-free target</span><strong>${plan.payoffDate ? esc(fmtDate(state, plan.payoffDate, { month: 'short', year: 'numeric' })) : '—'}</strong><span class="kpi-note">${plan.months} months · ${money(state, plan.interest)} interest</span></article>
+  const health = budgetHealth(state);
+  const insights = buildInsights(state).slice(0, 3);
+  const savingsRate = stats.income > 0 ? (stats.net / stats.income) * 100 : 0;
+  return `${pageHead(state, `${esc(state.household)} · ${fmtDate(state, todayKey(state), { month: 'long', day: 'numeric', year: 'numeric' })}`, 'Your household, in focus', `${monthLabel(state, month)} closed ${stats.net >= 0 ? `${money(state, stats.net)} ahead` : `${money(state, Math.abs(stats.net))} behind`} plan. Safe spend covers the next 14 days after bills and your ${money(state, state.settings.safe_to_spend_buffer)} buffer.`,
+    `<a class="btn primary" href="#/transactions" data-action="new-tx">Add transaction</a><a class="btn" href="#/reports">View reports</a>`)}
+  <div class="hero-grid">
+    <section class="card hero-card">
+      <div class="hero-main">
+        <div>
+          <p class="kpi-label">Safe to spend · 14 days</p>
+          <div class="hero-value">${money(state, safe)}</div>
+          <p class="hero-note">${money(state, currentCash(state))} in checking after ${money(state, sum(bills,(b)=>b.amount))} upcoming bills and a ${money(state, state.settings.safe_to_spend_buffer)} cushion.</p>
+          <div class="hero-metrics">
+            <div><span>Month income</span><strong>${money(state, stats.income)}</strong></div>
+            <div><span>Month spend</span><strong>${money(state, stats.spend)}</strong></div>
+            <div><span>Savings rate</span><strong class="${savingsRate>=0?'positive':'negative'}">${savingsRate.toFixed(1)}%</strong></div>
+            <div><span>Debt-free</span><strong>${plan.payoffDate ? esc(fmtDate(state, plan.payoffDate, { month:'short', year:'numeric'})) : '—'}</strong></div>
+          </div>
+        </div>
+        <div class="health-panel">
+          ${scoreRing(health.score, health.label)}
+          <div class="health-stats">
+            <div><span>Budget adherence</span><b>${health.adherence.toFixed(0)}%</b></div>
+            <div><span>Cash buffer</span><b>${money(state, health.low)}</b></div>
+            <div><span>Debt pressure</span><b>${(100-health.debtScore).toFixed(0)}%</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="card cashflow-card">
+      <div class="card-head"><div><p class="eyebrow">Cashflow</p><h2>Six-month rhythm</h2></div><span class="legend"><i class="dot teal"></i>Income <i class="dot coral"></i>Spending <i class="dot ink"></i>Net</span></div>
+      ${cashflowChart(state, months, {w:620,h:170})}
+      <div class="cashflow-foot"><span>Net this month <strong class="${stats.net>=0?'positive':'negative'}">${money(state, stats.net)}</strong></span><span>${esc(fmtDate(state, `${months[0]}-01`, {month:'short'}))}–${esc(fmtDate(state, `${months[months.length-1]}-01`, {month:'short', year:'numeric'}))}</span></div>
+    </section>
   </div>
-  ${cash.warnings.length ? `<div class="alert-strip"><span class="alert-mark">Cash watch</span><span>${esc(cash.warnings[0].text)}. <a href="#/bills">Open bill calendar</a></span></div>` : ''}
-  <div class="grid-two">
-    <section class="card"><div class="card-head"><h2>Six-month cashflow</h2><span class="legend"><i class="dot teal"></i>Income <i class="dot coral"></i>Spending</span></div>${cashflowChart(state, months)}</section>
-    <section class="card"><div class="card-head"><h2>Envelope progress · ${esc(fmtDate(state, `${month}-01`, { month: 'short' }))}</h2><a class="link" href="#/budget">Edit plan</a></div><div class="env-list">${envelopes.map((e) => `<div class="env-row"><div class="env-top"><span>${esc(e.category)}</span><span>${money(state, e.spent)} / ${money(state, e.budget)}</span></div>${progress(e.pct, e.color)}</div>`).join('')}</div></section>
-  </div>
-  <div class="grid-three">
-    <section class="card"><div class="card-head"><h2>Next 14 days</h2><a class="link" href="#/bills">Calendar</a></div><ul class="mini-list">${bills.length ? bills.slice(0, 6).map((b) => `<li><span class="date-chip">${esc(fmtDate(state, b.date, { month: 'short', day: 'numeric' }))}</span><span class="grow">${esc(b.name)}${b.autopay ? '<small> autopay</small>' : ''}</span><b>${money(state, b.amount)}</b></li>`).join('') : '<li class="empty">No bills due in the next two weeks.</li>'}</ul></section>
-    <section class="card"><div class="card-head"><h2>Savings goals</h2><a class="link" href="#/goals">All goals</a></div><ul class="mini-list">${goals.map((g) => { const pct = (numLocal(g.balance) / Math.max(1, numLocal(g.target))) * 100; return `<li><div class="grow"><span>${esc(g.name)}</span><small>${money(state, g.balance)} of ${money(state, g.target)}</small>${progress(pct, 'var(--teal)')}</div><b>${pct.toFixed(0)}%</b></li>`; }).join('')}</ul></section>
-    <section class="card"><div class="card-head"><h2>Recent activity</h2><a class="link" href="#/transactions">See all</a></div><ul class="mini-list">${recent.map((t) => `<li><span class="cat-dot" style="background:${esc(colorFor(state, t.category))}"></span><span class="grow">${esc(t.payee)}<small>${esc(fmtDate(state, t.date))} · ${esc(t.category)}</small></span><b class="${t.amount > 0 ? 'positive' : ''}">${t.amount > 0 ? '+' : '−'}${money(state, Math.abs(t.amount), 2)}</b></li>`).join('')}</ul></section>
-  </div>
-  <section class="card sim-card"><div class="card-head"><h2>What-if lab</h2><span class="hint">Sliders model the next month; nothing is saved until you apply a plan.</span></div><div class="sim-grid">
-    <label>Extra debt payment <output id="sim-extra-out">${money(state, state.ui.whatif.extraDebt)}/mo</output><input type="range" data-whatif="extraDebt" min="0" max="600" step="25" value="${state.ui.whatif.extraDebt}"></label>
-    <label>Dining reduction <output id="sim-dining-out">${state.ui.whatif.diningCut}%</output><input type="range" data-whatif="diningCut" min="0" max="100" step="5" value="${state.ui.whatif.diningCut}"></label>
-    <label>Income change <output id="sim-income-out">${state.ui.whatif.incomeShift > 0 ? '+' : ''}${state.ui.whatif.incomeShift}%</output><input type="range" data-whatif="incomeShift" min="-20" max="20" step="1" value="${state.ui.whatif.incomeShift}"></label>
-  </div><div id="sim-results" class="sim-results">${simResults(state)}</div></section>`;
+  ${cash.warnings.length ? `<div class="alert-strip"><span class="alert-mark">Cash watch</span><span>${esc(cash.warnings[0].text)} <a href="#/bills">Review calendar</a></span></div>` : `<div class="good-strip"><span class="alert-mark">On track</span><span>Cash stays above your ${money(state, state.settings.safe_to_spend_buffer)} buffer through the next 35 days.</span></div>`}
+  <div class="grid-three dashboard-grid">
+    <section class="card"><div class="card-head"><h2>Budget pressure</h2><a class="link" href="#/budget">Adjust plan</a></div><div class="env-list">${envelopes.map((e) => `<div class="env-row"><div class="env-top"><span>${esc(e.category)}</span><span class="${e.left<0?'negative':''}">${money(state, e.spent)} / ${money(state, e.budget)}</span></div>${progress(e.pct, e.left<0?'var(--coral)':e.color)}<div class="env-meta"><small>${e.left<0?`${money(state, Math.abs(e.left))} over`: `${money(state, e.left)} left`}</small><small>${e.pct.toFixed(0)}%</small></div></div>`).join('')}</div></section>
+    <section class="card"><div class="card-head"><h2>Insight feed</h2><a class="link" href="#/insights">All insights</a></div><div class="insight-feed">${insights.map((i)=>`<article class="feed-item ${esc(i.level)}"><div class="feed-top"><span class="tag">${esc(i.tag)}</span><span class="feed-level">${esc(i.level)}</span></div><strong>${esc(i.title)}</strong><p>${esc(i.text)}</p><button class="link" data-action="insight" data-kind="${esc(i.action.kind)}"${i.action.category?` data-category="${esc(i.action.category)}"`:''}${i.action.value!==undefined?` data-value="${esc(i.action.value)}"`:''}${i.action.id?` data-id="${esc(i.action.id)}"`:''}${i.action.name?` data-name="${esc(i.action.name)}"`:''}${i.action.route?` data-route="${esc(i.action.route)}"`:''}>${esc(i.action.label)} →</button></article>`).join('')}</div></section>
+    <section class="card"><div class="card-head"><h2>Recent activity</h2><a class="link" href="#/transactions">Ledger</a></div><ul class="mini-list activity-list">${recent.map((t) => `<li><span class="cat-dot" style="background:${esc(colorFor(state, t.category))}"></span><span class="grow"><span class="tx-payee">${esc(t.payee)}</span><small>${esc(fmtDate(state, t.date, {month:'short', day:'numeric'}))} · ${esc(t.category)}</small></span><b class="${t.amount > 0 ? 'positive' : ''}">${t.amount > 0 ? '+' : '−'}${money(state, Math.abs(t.amount), 2)}</b></li>`).join('')}</ul><div class="upcoming-mini"><div class="mini-head"><span>Next bills</span><a class="link" href="#/bills">Calendar</a></div>${bills.slice(0,2).map((b)=>`<div class="upcoming-row"><span>${esc(fmtDate(state,b.date,{month:'short',day:'numeric'}))}</span><span>${esc(b.name)}</span><b>${money(state,b.amount)}</b></div>`).join('') || '<p class="hint">No bills in the next 14 days.</p>'}</div></section>
+  </div>`;
 }
 
 function numLocal(v) { return Number(v) || 0; }
@@ -273,11 +301,21 @@ export function reports(state) {
     return { label: fmtDate(state, `${m}-01`, { month: 'short' }), y: Math.round(cumulative) };
   });
   const r = state.ui.report;
-  return `${pageHead(state, 'Trends', 'Reports and analysis', `${months.length} months · ${txs.length} entries · all charts drawn locally from the ledger.`, `<button class="btn" data-action="export-csv">Export CSV</button><button class="btn primary" data-action="export-json">Export JSON</button>`)}
+  const focusCat = r.category !== 'all' ? r.category : (byCategory[0]?.label || 'Groceries');
+  const focusColor = colorFor(state, focusCat);
+  const focusMonths = months.map((m) => ({ label: fmtDate(state, `${m}-01`, {month:'short'}), y: sum(transactionsInMonth(state,m).filter((t)=>t.category===focusCat && t.amount<0), (t)=>-t.amount) }));
+  const focusTotal = sum(focusMonths, (p)=>p.y);
+  const focusAvg = focusTotal / Math.max(1, focusMonths.length);
+  const focusBudget = num(state.envelopes.find((e)=>e.category===focusCat)?.monthly_budget);
+  const focusTx = txs.filter((t)=>t.category===focusCat && t.amount<0).sort((a,b)=>Math.abs(b.amount)-Math.abs(a.amount)).slice(0,5);
+  const prevMonths = months.slice(0, -1);
+  const prevAvg = prevMonths.length ? sum(prevMonths, (m)=>sum(transactionsInMonth(state,m).filter((t)=>t.category===focusCat && t.amount<0),(t)=>-t.amount)) / prevMonths.length : focusAvg;
+  const focusDelta = prevAvg ? ((focusAvg - prevAvg) / prevAvg) * 100 : 0;
+  return `${pageHead(state, 'Trends', 'Reports and analysis', `${months.length} months of household history, ${txs.length} transactions, all computed locally from your ledger.`, `<button class="btn" data-action="export-csv">Export CSV</button><button class="btn primary" data-action="export-json">Export JSON</button>`)}
   <section class="card filter-card"><div class="filters"><label>Range<select id="r-range">${opt('3m', 'Last 3 months', r.range)}${opt('6m', 'Last 6 months', r.range)}${opt('12m', 'Last 12 months', r.range)}${opt('all', 'All data', r.range)}${opt('custom', 'Custom', r.range)}</select></label><label>Category<select id="r-category">${opt('all', 'All categories', r.category)}${options([...state.envelopes.map((e) => e.category), 'Income'], r.category)}</select></label><label>From<input id="r-from" type="date" value="${esc(r.from)}"></label><label>To<input id="r-to" type="date" value="${esc(r.to)}"></label><button class="btn small" data-action="apply-range">Apply</button></div></section>
-  <div class="kpi-grid"><article class="kpi"><span class="kpi-label">Income</span><strong>${money(state, income)}</strong><span class="kpi-note">${money(state, income / Math.max(1, months.length))} per month</span></article><article class="kpi"><span class="kpi-label">Spending</span><strong>${money(state, spend)}</strong><span class="kpi-note">${money(state, spend / Math.max(1, months.length))} per month</span></article><article class="kpi"><span class="kpi-label">Net cashflow</span><strong class="${net >= 0 ? 'positive' : 'negative'}">${money(state, net)}</strong><span class="kpi-note">${((net / Math.max(1, income)) * 100).toFixed(1)}% savings rate</span></article><article class="kpi"><span class="kpi-label">Largest category</span><strong>${byCategory[0] ? esc(byCategory[0].label) : '—'}</strong><span class="kpi-note">${byCategory[0] ? money(state, byCategory[0].value) : 'No spending'}</span></article></div>
-  <div class="grid-two"><section class="card"><div class="card-head"><h2>Income and spending</h2><span class="legend"><i class="dot teal"></i>Income <i class="dot coral"></i>Spending</span></div>${cashflowChart(state, months)}</section><section class="card"><div class="card-head"><h2>Where it went</h2><span class="hint">${byCategory.length} categories</span></div><div class="donut-wrap">${donutChart(state, byCategory)}<ul class="legend-list">${byCategory.slice(0, 6).map((c) => `<li><span class="cat-dot" style="background:${esc(c.color)}"></span><span class="grow">${esc(c.label)}</span><b>${money(state, c.value)}</b></li>`).join('')}</ul></div></section></div>
-  <div class="grid-two"><section class="card"><div class="card-head"><h2>Cumulative net cashflow</h2><span class="hint">Running total across the range</span></div>${lineChart(state, trend, 'var(--teal)', 'Cumulative net cashflow')}</section><section class="card"><div class="card-head"><h2>Category totals</h2></div><div class="env-list">${byCategory.map((c) => `<div class="env-row"><div class="env-top"><span>${esc(c.label)}</span><span>${money(state, c.value)}</span></div>${progress((c.value / Math.max(1, byCategory[0]?.value || 1)) * 100, c.color)}</div>`).join('') || '<p class="empty">No spending in this range.</p>'}</div></section></div>`;
+  <div class="kpi-grid"><article class="kpi"><span class="kpi-label">Income</span><strong>${money(state, income)}</strong><span class="kpi-note">${money(state, income / Math.max(1, months.length))} avg / month</span></article><article class="kpi"><span class="kpi-label">Spending</span><strong>${money(state, spend)}</strong><span class="kpi-note">${money(state, spend / Math.max(1, months.length))} avg / month</span></article><article class="kpi"><span class="kpi-label">Net cashflow</span><strong class="${net >= 0 ? 'positive' : 'negative'}">${money(state, net)}</strong><span class="kpi-note">${((net / Math.max(1, income)) * 100).toFixed(1)}% savings rate</span></article><article class="kpi"><span class="kpi-label">Budget health</span><strong>${budgetHealth(state).score}</strong><span class="kpi-note">${esc(budgetHealth(state).label)} · ${byCategory[0] ? esc(byCategory[0].label) + ' leads spend' : 'No spend'}</span></article></div>
+  <div class="grid-two"><section class="card"><div class="card-head"><h2>Income and spending</h2><span class="legend"><i class="dot teal"></i>Income <i class="dot coral"></i>Spending <i class="dot ink"></i>Net</span></div>${cashflowChart(state, months, {h:190})}</section><section class="card"><div class="card-head"><h2>Where it went</h2><span class="hint">${byCategory.length} categories</span></div><div class="donut-wrap">${donutChart(state, byCategory)}<ul class="legend-list">${byCategory.slice(0, 6).map((c) => `<li><span class="cat-dot" style="background:${esc(c.color)}"></span><span class="grow">${esc(c.label)}</span><b>${money(state, c.value)}</b></li>`).join('')}</ul></div></section></div>
+  <div class="grid-two"><section class="card"><div class="card-head"><h2>Category deep dive · ${esc(focusCat)}</h2><span class="hint">${focusDelta>0?'+':''}${focusDelta.toFixed(1)}% vs prior months</span></div>${lineChart(state, focusMonths, focusColor, focusCat + ' monthly spend')}<div class="deep-dive-stats"><div><span>Range total</span><strong>${money(state, focusTotal)}</strong></div><div><span>Monthly avg</span><strong>${money(state, focusAvg)}</strong></div><div><span>Plan</span><strong>${focusBudget?money(state, focusBudget):'—'}</strong></div><div><span>Vs plan</span><strong class="${focusBudget && focusAvg>focusBudget?'negative':'positive'}">${focusBudget? (focusAvg>focusBudget?`+${money(state, focusAvg-focusBudget)}`:money(state, focusBudget-focusAvg)+' under') : '—'}</strong></div></div><ul class="mini-list">${focusTx.map((t)=>`<li><span class="grow"><span class="tx-payee">${esc(t.payee)}</span><small>${esc(fmtDate(state,t.date,{month:'short',day:'numeric'}))}</small></span><b>${money(state, Math.abs(t.amount),2)}</b></li>`).join('') || '<li class="empty">No transactions in this category.</li>'}</ul></section><section class="card"><div class="card-head"><h2>Cumulative net cashflow</h2><span class="hint">Running total across the range</span></div>${lineChart(state, trend, 'var(--teal)', 'Cumulative net cashflow')}<div class="card-head" style="margin-top:14px"><h2>Category totals</h2></div><div class="env-list">${byCategory.slice(0,6).map((c) => `<div class="env-row"><div class="env-top"><span><span class="cat-dot" style="background:${esc(c.color)}"></span>${esc(c.label)}</span><span>${money(state, c.value)}</span></div>${progress((c.value / Math.max(1, byCategory[0]?.value || 1)) * 100, c.color)}</div>`).join('') || '<p class="empty">No spending in this range.</p>'}</div></section></div>`;
 }
 
 export function insights(state) {
@@ -347,4 +385,4 @@ export function routeView(state, route) {
   }
 }
 
-export { transactionCSV, fmtDate, todayKey, addDays, incomeEvents };
+

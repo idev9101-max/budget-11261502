@@ -364,6 +364,23 @@ export function simulate(state) {
   };
 }
 
+export function budgetHealth(state) {
+  const month = monthOf(todayKey(state));
+  const stats = monthStats(state, month);
+  const savingsRate = stats.income > 0 ? Math.max(0, (stats.net / stats.income) * 100) : 0;
+  const envelopes = envelopeStatus(state, month);
+  const budgeted = envelopes.filter((e) => e.budget > 0);
+  const adherence = budgeted.length ? (budgeted.filter((e) => e.spent <= e.budget).length / budgeted.length) * 100 : 100;
+  const cash = cashProjection(state, 35);
+  const bufferTarget = Math.max(1, num(state.settings.safe_to_spend_buffer));
+  const cashScore = Math.max(0, Math.min(100, (cash.low / bufferTarget) * 100));
+  const debtBal = sum(state.debts, (d) => d.balance);
+  const debtScore = Math.max(0, 100 - Math.min(100, (debtBal / Math.max(1, stats.income * 6)) * 100));
+  const score = Math.round(savingsRate * 0.35 + adherence * 0.3 + cashScore * 0.2 + debtScore * 0.15);
+  const label = score >= 80 ? 'Strong' : score >= 65 ? 'Steady' : score >= 50 ? 'Needs attention' : 'At risk';
+  return { score: Math.max(0, Math.min(100, score)), label, savingsRate, adherence, cashScore, debtScore, low: cash.low };
+}
+
 export function buildInsights(state) {
   const out = [];
   const month = monthOf(todayKey(state));
@@ -375,8 +392,8 @@ export function buildInsights(state) {
   if (diningEnv && dining > num(diningEnv.monthly_budget)) {
     const target = Math.round(dining * 0.85);
     out.push({
-      level: 'warn', tag: 'Spending', title: `Dining out is ${money(dining - diningEnv.monthly_budget)} over plan`,
-      text: `Three-month average is ${money(dining)} against a ${money(diningEnv.monthly_budget)} envelope. Setting the envelope to ${money(target)} keeps the target honest and frees ${money(dining - target)} a month.`,
+      level: 'warn', tag: 'Spending', title: `Dining is ${money(dining - diningEnv.monthly_budget)} above plan`,
+      text: `Your three-month dining average is ${money(dining)} against a ${money(diningEnv.monthly_budget)} envelope. A ${money(target)} plan keeps weekends intact while freeing ${money(dining - target)} monthly.`,
       action: { label: `Set plan to ${money(target)}`, kind: 'set-budget', category: 'Dining out', value: target },
     });
   }
@@ -384,17 +401,17 @@ export function buildInsights(state) {
   const groceryEnv = state.envelopes.find((e) => e.category === 'Groceries');
   if (groceryEnv && groceries > num(groceryEnv.monthly_budget)) {
     out.push({
-      level: 'info', tag: 'Envelope', title: `Groceries average ${money(groceries)} monthly`,
-      text: `The ${money(groceryEnv.monthly_budget)} envelope is ${money(groceries - groceryEnv.monthly_budget)} below recent spending. Review the weekly shop before another month closes.`,
-      action: { label: 'Open budget planner', kind: 'go', route: '#/budget' },
+      level: 'info', tag: 'Envelope', title: `Groceries trend ${money(groceries)} / month`,
+      text: `Recent grocery spend runs ${money(groceries - groceryEnv.monthly_budget)} above the ${money(groceryEnv.monthly_budget)} envelope. Tighten the weekly shop or raise the plan deliberately.`,
+      action: { label: 'Review budget', kind: 'go', route: '#/budget' },
     });
   }
   const cash = cashProjection(state, 35);
   if (cash.warnings.length) {
     out.push({
-      level: 'alert', tag: 'Cash timing', title: `Cash dips to ${money(cash.low)} in the next 35 days`,
-      text: `${cash.warnings[0].text}. Keep the buffer intact or move a bill date before it lands.`,
-      action: { label: 'Review bill calendar', kind: 'go', route: '#/bills' },
+      level: 'alert', tag: 'Cash timing', title: `Cash dips to ${money(cash.low)} in 35 days`,
+      text: `${cash.warnings[0].text}. Protect the buffer now or shift a bill before it clusters.`,
+      action: { label: 'Open bill calendar', kind: 'go', route: '#/bills' },
     });
   }
   const emergency = state.goals.find((g) => g.id === 'emergency') ?? state.goals[0];
@@ -406,8 +423,8 @@ export function buildInsights(state) {
       const monthsLeft = Math.max(1, (Date.parse(`${target}-01`) - Date.parse(`${month}-01`)) / (30.5 * DAY));
       const needed = Math.ceil(gap / monthsLeft);
       out.push({
-        level: 'warn', tag: 'Goal', title: `${emergency.name} is ${money(num(emergency.target) - num(emergency.balance))} short`,
-        text: `At ${money(emergency.monthly_contribution)} a month it lands ${projected.slice(0, 7)}, past the ${target} target. Raising the contribution to ${money(needed)} gets it back on schedule.`,
+        level: 'warn', tag: 'Goal', title: `${emergency.name} is ${money(gap)} short of target`,
+        text: `At ${money(emergency.monthly_contribution)}/mo you land ${fmtDate(state, projected, { month: 'short', year: 'numeric' })}, past the ${target} target. ${money(needed)}/mo brings it back on schedule.`,
         action: { label: `Set ${money(needed)}/mo`, kind: 'set-contribution', id: emergency.id, value: needed },
       });
     }
@@ -418,8 +435,8 @@ export function buildInsights(state) {
     const current = debtPlan(state, { strategy: 'snowball', extra: sum(state.debts, (d) => d.extra) });
     if (plan.interest < current.interest) {
       out.push({
-        level: 'info', tag: 'Debt', title: `${card.name} costs ${num(card.apr).toFixed(2)}% APR`,
-        text: `Avalanche targets that rate first and saves about ${money(current.interest - plan.interest)} in interest over the full payoff compared with snowball.`,
+        level: 'info', tag: 'Debt', title: `${card.name} is costing ${num(card.apr).toFixed(2)}% APR`,
+        text: `Avalanche order targets this rate first and saves about ${money(current.interest - plan.interest)} in interest versus snowball over the full payoff.`,
         action: { label: 'Use avalanche', kind: 'set-strategy', value: 'avalanche' },
       });
     }
@@ -428,8 +445,8 @@ export function buildInsights(state) {
   if (review.length) {
     const total = sum(review, (s) => s.amount);
     out.push({
-      level: 'info', tag: 'Subscriptions', title: `${review.length} subscription needs a decision`,
-      text: `${review.map((s) => s.name).join(' and ')} cost ${money(total)} a month. Cancelling sends that money to the emergency fund.`,
+      level: 'info', tag: 'Subscriptions', title: `${review.length} subscriptions need a decision`,
+      text: `${review.map((s) => s.name).join(' and ')} cost ${money(total)}/mo. Canceling the first one routes that cash straight to savings.`,
       action: { label: `Cancel ${review[0].name}`, kind: 'cancel-sub', name: review[0].name, value: review[0].amount },
     });
   }
@@ -437,8 +454,8 @@ export function buildInsights(state) {
   if (plan.budget > 0 && plan.income > 0) {
     const plannedRate = Math.round((plan.budget / plan.income) * 100);
     out.push({
-      level: plannedRate > 90 ? 'warn' : 'good', tag: 'Plan', title: `${plannedRate}% of monthly income is assigned a job`,
-      text: `${money(plan.income)} income and ${money(plan.budget)} planned across ${state.envelopes.length} envelopes leaves ${money(plan.income - plan.budget)} unassigned this month.`,
+      level: plannedRate > 90 ? 'warn' : 'good', tag: 'Plan', title: `${plannedRate}% of income has a job`,
+      text: `${money(plan.income)} in income, ${money(plan.budget)} planned across ${state.envelopes.length} envelopes, ${money(Math.max(0, plan.income - plan.budget))} still unassigned.`,
       action: { label: 'Balance envelopes', kind: 'go', route: '#/budget' },
     });
   }

@@ -1,6 +1,6 @@
 [
-  { "file": "1-cover-dashboard.jpg", "path": "#/", "viewport": { "width": 1280, "height": 800 } },
-  { "file": "2-transactions-desktop.jpg", "path": "#/transactions", "viewport": { "width": 1280, "height": 800 } },
-  { "file": "3-reports-desktop.jpg", "path": "#/reports", "viewport": { "width": 1280, "height": 800 } },
+  { "file": "1-cover-dashboard.jpg", "path": "#/", "viewport": { "width": 1280, "height": 720 } },
+  { "file": "2-transactions-desktop.jpg", "path": "#/transactions", "viewport": { "width": 1280, "height": 720 } },
+  { "file": "3-reports-desktop.jpg", "path": "#/reports", "viewport": { "width": 1280, "height": 720 } },
   { "file": "4-mobile-overview.jpg", "path": "#/", "viewport": { "width": 390, "height": 844 } }
 ]
